@@ -1,1 +1,54 @@
+name: Build MSM Kernel (Monaco)
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            bc \
+            ccache \
+            git \
+            zip \
+            unzip
+
+      - name: Build Monaco Kernel
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          if [ -f "build.config.msm.monaco" ]; then
+            DEFCONFIG_NAME=$(grep -E "^DEFCONFIG=" build.config.msm.monaco | cut -d'=' -f2)
+            if [ -n "$DEFCONFIG_NAME" ]; then
+              make $DEFCONFIG_NAME
+            else
+              make monaco-perf_defconfig || make monaco_defconfig
+            fi
+          else
+            make monaco-perf_defconfig || make monaco_defconfig
+          fi
+
+          make -j$(nproc) Image KCFLAGS="-w"
+
+      - name: Upload Kernel Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: monaco-kernel-Image
+          path: arch/arm64/boot/Image
