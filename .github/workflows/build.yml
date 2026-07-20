@@ -31,12 +31,14 @@ jobs:
             unzip
 
       # 【修正箇所2】makeが参照できる場所に defconfig をコピー
-      - name: Setup defconfig
+    - name: Setup defconfig
         run: |
           mkdir -p external/linux-msm/arch/arm64/configs/vendor/
           cp defconfig external/linux-msm/arch/arm64/configs/vendor/monaco-perf_defconfig
           cp defconfig external/linux-msm/arch/arm64/configs/vendor/monaco_defconfig
-
+          
+          # 【追加】ハードコードされた initramfs のパスを空に置き換える
+          sed -i 's|CONFIG_INITRAMFS_SOURCE=.*|CONFIG_INITRAMFS_SOURCE=""|g' external/linux-msm/arch/arm64/configs/vendor/monaco*
       - name: Build Monaco Kernel
         working-directory: external/linux-msm
         run: |
