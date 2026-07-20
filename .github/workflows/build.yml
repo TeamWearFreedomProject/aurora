@@ -12,6 +12,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          submodules: 'recursive' # 【修正箇所1】サブモジュール（カーネル本体）を自動取得
 
       - name: Install Build Dependencies
         run: |
@@ -28,6 +29,13 @@ jobs:
             git \
             zip \
             unzip
+
+      # 【修正箇所2】makeが参照できる場所に defconfig をコピー
+      - name: Setup defconfig
+        run: |
+          mkdir -p external/linux-msm/arch/arm64/configs/vendor/
+          cp defconfig external/linux-msm/arch/arm64/configs/vendor/monaco-perf_defconfig
+          cp defconfig external/linux-msm/arch/arm64/configs/vendor/monaco_defconfig
 
       - name: Build Monaco Kernel
         working-directory: external/linux-msm
