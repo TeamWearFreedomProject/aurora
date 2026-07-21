@@ -66,14 +66,23 @@ jobs:
             make vendor/monaco-perf_defconfig || make vendor/monaco_defconfig
           fi
 
-          # drivers/clk/qcom/Makefile に -I(src) 相当の指定が欠落しており、
-          # trace.h の相対インクルード(./trace.h)が解決できずビルドが失敗する。
-          # ccflags-y += -I$(src) を明示的に注入して回避する。
-          if ! grep -q "ccflags-y.*-I\$(src)" drivers/clk/qcom/Makefile; then
-            echo "" >> drivers/clk/qcom/Makefile
-            echo "ccflags-y += -I\$(src)" >> drivers/clk/qcom/Makefile
-            echo "drivers/clk/qcom/Makefile に -I(src) を追加しました"
-          fi
+          # このカーネルツリーは複数のディレクトリ(drivers/clk/qcom, drivers/soc/qcom/dcvs 等)で
+          # 同様に trace*.h の相対インクルード(./trace.h 等)を使っており、
+          # 該当ディレクトリの Makefile に -I(src) 相当の指定が軒並み欠落している。
+          # CREATE_TRACE_POINTS を使う *.c を含む全ディレクトリの Makefile に
+          # ccflags-y += -I$(src) を一括注入して回避する。
+          echo "=== -I(src) 欠落ディレクトリを検索して一括修正します ==="
+          for tracefile in $(grep -rl "CREATE_TRACE_POINTS" --include="*.c" drivers kernel sound net block fs mm 2>/dev/null); do
+            dir=$(dirname "$tracefile")
+            mfile="$dir/Makefile"
+            if [ -f "$mfile" ]; then
+              if ! grep -q 'ccflags-y.*-I\$(src)' "$mfile"; then
+                echo "" >> "$mfile"
+                echo 'ccflags-y += -I$(src)' >> "$mfile"
+                echo "  patched: $mfile"
+              fi
+            fi
+          done
           make -j$(nproc) Image modules KCFLAGS="-w" || {
             echo "並列ビルドで失敗。-j1でシリアルビルドして原因を切り分けます。"
             make -j1 Image modules KCFLAGS="-w" V=1
