@@ -39,6 +39,16 @@ jobs:
           # ハードコードされた initramfs のパスを空に置き換える
           sed -i 's|CONFIG_INITRAMFS_SOURCE=.*|CONFIG_INITRAMFS_SOURCE=""|g' external/linux-msm/arch/arm64/configs/vendor/monaco*
 
+      - name: Diagnose drivers/clk/qcom/trace.h presence
+        working-directory: external/linux-msm
+        run: |
+          echo "=== trace.h存在確認 ==="
+          ls -la drivers/clk/qcom/trace.h 2>&1 || echo "ファイルが存在しません"
+          echo "=== シンボリックリンク確認 ==="
+          find drivers/clk/qcom -maxdepth 1 -type l -exec ls -la {} \;
+          echo "=== Makefile内のccflags確認 ==="
+          grep -n "ccflags\|CFLAGS_clk-debug\|clk-debug" drivers/clk/qcom/Makefile
+
       - name: Build Monaco Kernel
         working-directory: external/linux-msm
         run: |
@@ -56,7 +66,13 @@ jobs:
             make vendor/monaco-perf_defconfig || make vendor/monaco_defconfig
           fi
 
-          make -j$(nproc) Image modules KCFLAGS="-w"
+          # 並列ビルドでdrivers/clk/qcom/trace.hのローカルインクルード解決が
+          # 崩れるケースがあるため、まず並列ビルドを試し、失敗時は-j1で再試行して
+          # 問題箇所を切り分ける
+          make -j$(nproc) Image modules KCFLAGS="-w" || {
+            echo "並列ビルドで失敗。-j1でシリアルビルドして原因を切り分けます。"
+            make -j1 Image modules KCFLAGS="-w" V=1
+          }
 
           # モジュールを一時ディレクトリにインストール(rootfsへの差し替え用)
           mkdir -p ../modules_install
@@ -75,11 +91,6 @@ jobs:
 
       - name: Create boot.img (header v4, no dtb)
         run: |
-          # README(argosphil/aurora)の知見に基づく構成:
-          # - v4 abootimgヘッダーのみ、非圧縮kernelのみ
-          # - DTBはboot.imgに含めない(ブートローダー側供給のため)
-          # - ramdiskを積んでも正しく渡らないため基本は同梱しないが、
-          #   mkbootimg v4がramdisk必須でエラーになる場合に備え空cpioで対応
           set -e
           python3 mkbootimg-tool/mkbootimg.py \
             --header_version 4 \
@@ -111,8 +122,6 @@ jobs:
 
       - name: Download AsteroidOS rootfs (rubyfish base)
         run: |
-          # SoCが異なる(TicWatch Pro3 = Snapdragon Wear 4100, google-eos = SW5100/Monaco)ため
-          # ユーザーランド(systemd/Qt/asteroid-launcher等)のみ流用し、カーネルモジュールは後で差し替える
           BASE_URL="https://release.asteroidos.org/nightlies/rubyfish"
           wget -q "${BASE_URL}/asteroid-image-rubyfish.rootfs.ext4" -O asteroid-rootfs.ext4 || \
           wget -q "https://release.asteroidos.org/2.0/rubyfish/asteroid-image-rubyfish.rootfs.ext4" -O asteroid-rootfs.ext4
@@ -125,8 +134,6 @@ jobs:
           set -e
           sudo apt-get install -y e2fsprogs
 
-          # モジュール容量分の空きを確保するため、ext4イメージ自体を拡張しておく
-          # (rubyfish向けに作られたイメージは空き容量がギリギリな可能性があるため)
           MODULES_SIZE_MB=$(du -sm modules_install | cut -f1)
           echo "Modules size: ${MODULES_SIZE_MB}MB"
           EXTRA_MB=$((MODULES_SIZE_MB + 200))
@@ -134,11 +141,9 @@ jobs:
           e2fsck -f -y asteroid-rootfs.ext4 || true
           resize2fs asteroid-rootfs.ext4 $(( $(stat -c%s asteroid-rootfs.ext4) / 1024 / 1024 + EXTRA_MB ))M
 
-          # ext4イメージをループマウントして書き込み可能な状態で操作
           mkdir -p /tmp/rootfs_mnt
           sudo mount -o loop asteroid-rootfs.ext4 /tmp/rootfs_mnt
 
-          # 既存(rubyfish用)のカーネルモジュールを退避し、Monaco用に差し替え
           KVER=$(ls modules_install/lib/modules)
           echo "Kernel version: $KVER"
 
