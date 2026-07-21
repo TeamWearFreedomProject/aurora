@@ -84,8 +84,22 @@ jobs:
             fi
           done
           make -j$(nproc) Image modules KCFLAGS="-w" || {
-            echo "並列ビルドで失敗。-j1でシリアルビルドして原因を切り分けます。"
-            make -j1 Image modules KCFLAGS="-w" V=1
+            echo "並列ビルドで失敗。原因を確認します。"
+
+            # drivers/soc/qcom/sps は未定義マクロによりビルドが通らないことがある。
+            # Monaco(SW5100)には本質的に不要な古いQualcommドライバのため、
+            # このドライバを無効化して再ビルドする。
+            if grep -q "CONFIG_SPS=y\|CONFIG_SPS=m" .config 2>/dev/null; then
+              echo "CONFIG_SPS を無効化して再試行します。"
+              scripts/config --file .config --disable CONFIG_SPS 2>/dev/null || \
+                sed -i 's/^CONFIG_SPS=.*/# CONFIG_SPS is not set/' .config
+              yes "" | make oldconfig
+            fi
+
+            make -j$(nproc) Image modules KCFLAGS="-w" || {
+              echo "-jで失敗。-j1でシリアルビルドして原因を切り分けます。"
+              make -j1 Image modules KCFLAGS="-w" V=1
+            }
           }
 
           # モジュールを一時ディレクトリにインストール(rootfsへの差し替え用)
