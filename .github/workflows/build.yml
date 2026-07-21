@@ -66,9 +66,14 @@ jobs:
             make vendor/monaco-perf_defconfig || make vendor/monaco_defconfig
           fi
 
-          # 並列ビルドでdrivers/clk/qcom/trace.hのローカルインクルード解決が
-          # 崩れるケースがあるため、まず並列ビルドを試し、失敗時は-j1で再試行して
-          # 問題箇所を切り分ける
+          # drivers/clk/qcom/Makefile に -I(src) 相当の指定が欠落しており、
+          # trace.h の相対インクルード(./trace.h)が解決できずビルドが失敗する。
+          # ccflags-y += -I$(src) を明示的に注入して回避する。
+          if ! grep -q "ccflags-y.*-I\$(src)" drivers/clk/qcom/Makefile; then
+            echo "" >> drivers/clk/qcom/Makefile
+            echo "ccflags-y += -I\$(src)" >> drivers/clk/qcom/Makefile
+            echo "drivers/clk/qcom/Makefile に -I(src) を追加しました"
+          fi
           make -j$(nproc) Image modules KCFLAGS="-w" || {
             echo "並列ビルドで失敗。-j1でシリアルビルドして原因を切り分けます。"
             make -j1 Image modules KCFLAGS="-w" V=1
@@ -86,7 +91,6 @@ jobs:
 
       - name: Get mkbootimg (AOSP)
         run: |
-          # AOSP公式のmkbootimg.pyをcloneして使う(Android SDKに依存しないため)
           git clone --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-tool
 
       - name: Create boot.img (header v4, no dtb)
