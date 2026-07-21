@@ -63,3 +63,44 @@ jobs:
         with:
           name: monaco-kernel-Image
           path: external/linux-msm/arch/arm64/boot/Image
+
+      - name: Get mkbootimg (AOSP)
+        run: |
+          # AOSP公式のmkbootimg.pyをcloneして使う(Android SDKに依存しないため)
+          git clone --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-tool
+
+      - name: Create boot.img (header v4, no dtb)
+        run: |
+          # README(argosphil/aurora)の知見に基づく構成:
+          # - v4 abootimgヘッダーのみ、非圧縮kernelのみ
+          # - DTBはboot.imgに含めない(ブートローダー側供給のため)
+          # - ramdiskを積んでも正しく渡らないため基本は同梱しないが、
+          #   mkbootimg v4がramdisk必須でエラーになる場合に備え空cpioで対応
+          set -e
+          python3 mkbootimg-tool/mkbootimg.py \
+            --header_version 4 \
+            --kernel external/linux-msm/arch/arm64/boot/Image \
+            --os_version 13.0.0 \
+            --os_patch_level 2026-01 \
+            --output boot.img || {
+              echo "ramdiskなしで失敗。空のramdiskを作って再試行します。"
+              mkdir -p empty_ramdisk_root
+              (cd empty_ramdisk_root && find . | cpio -o -H newc > ../empty_ramdisk.cpio)
+              python3 mkbootimg-tool/mkbootimg.py \
+                --header_version 4 \
+                --kernel external/linux-msm/arch/arm64/boot/Image \
+                --ramdisk empty_ramdisk.cpio \
+                --os_version 13.0.0 \
+                --os_patch_level 2026-01 \
+                --output boot.img
+            }
+
+          echo "=== boot.img info ==="
+          ls -la boot.img
+          file boot.img
+
+      - name: Upload boot.img Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: monaco-boot-img
+          path: boot.img
