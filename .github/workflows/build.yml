@@ -56,7 +56,11 @@ jobs:
             make vendor/monaco-perf_defconfig || make vendor/monaco_defconfig
           fi
 
-          make -j$(nproc) Image KCFLAGS="-w"
+          make -j$(nproc) Image modules KCFLAGS="-w"
+
+          # モジュールを一時ディレクトリにインストール(rootfsへの差し替え用)
+          mkdir -p ../modules_install
+          make -j$(nproc) INSTALL_MOD_PATH=$(pwd)/../modules_install modules_install
 
       - name: Upload Kernel Image Artifact
         uses: actions/upload-artifact@v4
@@ -104,3 +108,57 @@ jobs:
         with:
           name: monaco-boot-img
           path: boot.img
+
+      - name: Download AsteroidOS rootfs (rubyfish base)
+        run: |
+          # SoCが異なる(TicWatch Pro3 = Snapdragon Wear 4100, google-eos = SW5100/Monaco)ため
+          # ユーザーランド(systemd/Qt/asteroid-launcher等)のみ流用し、カーネルモジュールは後で差し替える
+          BASE_URL="https://release.asteroidos.org/nightlies/rubyfish"
+          wget -q "${BASE_URL}/asteroid-image-rubyfish.rootfs.ext4" -O asteroid-rootfs.ext4 || \
+          wget -q "https://release.asteroidos.org/2.0/rubyfish/asteroid-image-rubyfish.rootfs.ext4" -O asteroid-rootfs.ext4
+
+          ls -la asteroid-rootfs.ext4
+          file asteroid-rootfs.ext4
+
+      - name: Inject Monaco kernel modules into rootfs
+        run: |
+          set -e
+          sudo apt-get install -y e2fsprogs
+
+          # モジュール容量分の空きを確保するため、ext4イメージ自体を拡張しておく
+          # (rubyfish向けに作られたイメージは空き容量がギリギリな可能性があるため)
+          MODULES_SIZE_MB=$(du -sm modules_install | cut -f1)
+          echo "Modules size: ${MODULES_SIZE_MB}MB"
+          EXTRA_MB=$((MODULES_SIZE_MB + 200))
+
+          e2fsck -f -y asteroid-rootfs.ext4 || true
+          resize2fs asteroid-rootfs.ext4 $(( $(stat -c%s asteroid-rootfs.ext4) / 1024 / 1024 + EXTRA_MB ))M
+
+          # ext4イメージをループマウントして書き込み可能な状態で操作
+          mkdir -p /tmp/rootfs_mnt
+          sudo mount -o loop asteroid-rootfs.ext4 /tmp/rootfs_mnt
+
+          # 既存(rubyfish用)のカーネルモジュールを退避し、Monaco用に差し替え
+          KVER=$(ls modules_install/lib/modules)
+          echo "Kernel version: $KVER"
+
+          sudo mkdir -p /tmp/rootfs_mnt/lib/modules_rubyfish_backup
+          if [ -d /tmp/rootfs_mnt/lib/modules ]; then
+            sudo mv /tmp/rootfs_mnt/lib/modules/* /tmp/rootfs_mnt/lib/modules_rubyfish_backup/ 2>/dev/null || true
+          fi
+
+          sudo mkdir -p /tmp/rootfs_mnt/lib/modules
+          sudo cp -r modules_install/lib/modules/$KVER /tmp/rootfs_mnt/lib/modules/
+
+          sync
+          sudo umount /tmp/rootfs_mnt
+
+          mv asteroid-rootfs.ext4 asteroid-monaco-rootfs.ext4
+          echo "=== Final rootfs info ==="
+          ls -la asteroid-monaco-rootfs.ext4
+
+      - name: Upload rootfs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: monaco-asteroid-rootfs
+          path: asteroid-monaco-rootfs.ext4
