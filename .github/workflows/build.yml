@@ -93,8 +93,26 @@ jobs:
               echo "CONFIG_SPS を無効化して再試行します。"
               scripts/config --file .config --disable CONFIG_SPS 2>/dev/null || \
                 sed -i 's/^CONFIG_SPS=.*/# CONFIG_SPS is not set/' .config
-              yes "" | make oldconfig
             fi
+
+            # drivers/power/supply/qcom/pmic-voter-compat.c は
+            # modules/bms サブモジュール側の misc/gvotable.h を参照するが、
+            # in-treeビルドではそのインクルードパスが渡らないため失敗する。
+            # 該当ドライバのビルドを無効化する。
+            for cfg in CONFIG_QTI_PMIC_VOTER_COMPAT CONFIG_QPNP_QG CONFIG_SMB5 CONFIG_QPNP_FG_GEN4; do
+              if grep -q "^${cfg}=y\|^${cfg}=m" .config 2>/dev/null; then
+                echo "${cfg} を無効化します。"
+                scripts/config --file .config --disable ${cfg} 2>/dev/null || \
+                  sed -i "s/^${cfg}=.*/# ${cfg} is not set/" .config
+              fi
+            done
+
+            # pmic-voter-compat.o 単体をビルド対象から明示的に除外(念のため)
+            if [ -f drivers/power/supply/qcom/Makefile ]; then
+              sed -i '/pmic-voter-compat/d' drivers/power/supply/qcom/Makefile
+            fi
+
+            yes "" | make oldconfig
 
             make -j$(nproc) Image modules KCFLAGS="-w" || {
               echo "-jで失敗。-j1でシリアルビルドして原因を切り分けます。"
