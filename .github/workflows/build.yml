@@ -107,9 +107,18 @@ jobs:
               fi
             done
 
-            # pmic-voter-compat.o 単体をビルド対象から明示的に除外(念のため)
-            if [ -f drivers/power/supply/qcom/Makefile ]; then
-              sed -i '/pmic-voter-compat/d' drivers/power/supply/qcom/Makefile
+            # pmic-voter-compat.c を「gvotable.h に依存しないダミー実装」に
+            # 差し替える。Makefileの依存関係定義を壊さずに済むよう、
+            # Makefile自体は編集せずソースファイルの中身だけを空実装にする。
+            if [ -f drivers/power/supply/qcom/pmic-voter-compat.c ]; then
+              cp drivers/power/supply/qcom/pmic-voter-compat.c \
+                 drivers/power/supply/qcom/pmic-voter-compat.c.orig
+              cat > drivers/power/supply/qcom/pmic-voter-compat.c << 'EOF'
+/* gvotable.h が解決できないため、ビルド通過のため一時的に空実装化 */
+#include <linux/module.h>
+MODULE_LICENSE("GPL v2");
+EOF
+              echo "pmic-voter-compat.c をダミー実装に差し替えました"
             fi
 
             yes "" | make oldconfig
